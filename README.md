@@ -1,0 +1,12 @@
+This current repository give you an overview of basics of diffusion models, powerful custom diffusion model pipelines and how to train a diffusion model on our own.
+- Introduction to Diffusion Models.
+  - Introduction to diffusers.
+  - Diffusion models from scratch.
+- Fine-tuning, Guidance and Conditioning.
+  - Fine-tuning and guidance.
+  - Making a Class Conditioned Diffusion model.
+- Stable Diffusion.
+- Going Further With Diffusion Models.
+  - Faster Sampling via Distillation.
+  - Audio / Video diffusion models.
+  - DDIM Inversion

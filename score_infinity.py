@@ -339,7 +339,7 @@ def numpy_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
             np.tr(sigma2) - 2 * tr_covmean) 
 
 
-"""if __name__ == '__main__':
+if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('--path', type=str, required=True,
@@ -349,5 +349,4 @@ def numpy_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
     parser.add_argument('--out_path', type=str, required=True,
                         help=('Path to save dataset stats'))
     args = parser.parse_args()
-"""
 

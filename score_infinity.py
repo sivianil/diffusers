@@ -106,7 +106,7 @@ def calculate_FID_infinity(gen_model, ndim, batch_size, gt_path, num_im=50000, n
     for fid_batchsize in fid_batches:
         np.random.shuffle(activations)
         fid_activations = activations[:fid_batchsize]
-        fids.append(compute_FID_score(inception_model, fid_activations, gt_path))
+        fids.append(compute_FID_score(fid_activations, gt_path))
     #https://claude.ai/chat/983874ae-bb17-4f4b-929e-64958d24debb
     fids = np.array(fids).reshape(-1, 1)
 
@@ -174,7 +174,101 @@ def calculate_FID_infinity_path(real_path, fake_path, batch_size=50, min_fake=50
 
     return fid_infinity
 
+def calculate_IS_infinity(gen_model, ndim, batch_size, num_im=50000, num_points=15):
+    """
+    Calculates an effictively unbiased IS_inf using extrapolation
+    Args:
+        gen_model: (nn.Module)
+            The trained generator takes z~N(0,1) as input and outputs an
+            image of (-1, 1).
+        ndim: (int)
+            dimension of z.
+        batch_size: (int)
+            batch size of generator
+        num_im: (int)
+            Number of images we are generating to evaluate IS_inf
+            default: 50000
+        num_points: (int)
+            Number of IS_N we evaluate to fit a line
+            default: 15
 
+    """
+    #load inception pretrained model
+    inception_model = load_inception_net()
+
+    #define sobo_inv sampler
+    z_sampler = randn_sampler(ndim, True)
+
+    #get all activations of generated images
+    logits, _ = accumulate_activations(gen_model, inception_model, num_im, z_sampler, batch_size)
+
+    #Initialize an empty list to store IS for all batches
+    IS = []
+
+    #Number of images to evaluate IS_N at regular intervals over N
+    IS_batches = np.linspace(5000, num_im, num_points).astype('int32')
+
+    #Evaluate IS_N
+    for IS_batch_size in IS_batches:
+        np.random.shuffle(logits)
+        IS_logits = logits[:IS_batch_size]
+        IS.append(calculate_inception_score(IS_logits)[0])
+    
+    np.array(IS).reshape(-1, 1)
+
+    #fit linear regression; IS scores has a linear relationship with 1/batch_size
+    reg = LinearRegression().fit(1/IS_batches.reshape(-1, 1), IS)
+    #Uses the fitted reg model to predict FID when batch_size is infinity
+    IS_infinity = reg.predict(np.array([[0]]))[0,0]
+
+    return  IS_infinity
+
+def calculate_IS_infinity_path(path, batch_size=50, min_fake=5000, num_points=15):
+    """
+    Calculates effectively unbiased IS_inf using extrapolation given 
+    paths to real and fake data
+    Args:
+        path: (str)
+            Path to fake dataset.
+        batch_size: (int)
+            The batch size for dataloader.
+            Default: 50
+        min_fake: (int)
+            Minimum number of images to evaluate IS on.
+            Default: 5000
+        num_points: (int)
+            Number of IS_N we evaluate to fit a line.
+            Default: 15
+    """
+    # load pretrained inception model 
+    inception_model = load_inception_net()
+
+    # get all activations of generated images
+    _, logits = compute_path_statistics(path, batch_size, model=inception_model)
+
+    num_fake = len(logits)
+    assert num_fake > min_fake, \
+        'number of fake data must be greater than the minimum point for extrapolation'
+
+    IS = []
+
+    # Choose the number of images to evaluate FID_N at regular intervals over N
+    IS_batches = np.linspace(min_fake, num_fake, num_points).astype('int32')
+
+    # Evaluate IS_N
+    for IS_batch_size in IS_batches:
+        # sample with replacement
+        np.random.shuffle(logits)
+        IS_logits = logits[:IS_batch_size]
+        IS.append(calculate_inception_score(IS_logits)[0])
+    IS = np.array(IS).reshape(-1, 1)
+    
+    # Fit linear regression
+    reg = LinearRegression().fit(1/IS_batches.reshape(-1, 1), IS)
+    IS_infinity = reg.predict(np.array([[0]]))[0,0]
+
+    return IS_infinity
+    
 ################# Functions for calculating and saving dataset inception statistics ##################
 class im_dataset(Dataset):
     def __init__(self, data_dir):
@@ -274,7 +368,7 @@ def to_img(x):
     return x
 
 ####################### Functions to help calculate FID and IS #######################
-def compute_FID_score(model, act, gt_npz):
+def compute_FID_score(act, gt_npz):
     """
     Calculate score given act and path to ground truth npz
     """
@@ -283,6 +377,26 @@ def compute_FID_score(model, act, gt_npz):
     FID = numpy_calculate_frechet_distance(gen_m, gen_s, data_m, data_s)
 
     return FID
+
+"""
+The authors set num_splits = 1 by default in their implementation, aligning with their methodology in their paper. 
+The func is desgined to calculate inception score for a single batch of predictions
+The num_splits parameter is kept for compatibility with other implementations, but it's set to 1 because they're not using splits in their main methodology.
+In the context of the paper "Effectively Unbiased FID and Inception Score and where to find them":
+
+1) They calculate the Inception Score for multiple batch sizes separately.
+2) For each batch size, they compute a single Inception Score (hence num_splits = 1).
+3) They then use these individual scores to extrapolate to the infinite batch size.
+"""
+def calculate_inception_score(pred, num_splits=1):
+    scores = []
+    for index in range(num_splits):
+        pred_chunk = pred[index * (pred.shape[0] // num_splits) : (index + 1) * (pred.shape[0] // num_splits), :]
+        kl_inception = pred_chunk * (np.log(pred_chunk) - np.log(np.expand_dims(np.mean(pred_chunk), 0)))
+        kl_inception = np.mean(np.sum(kl_inception, 1))
+        scores.append(np.exp(kl_inception))
+    return np.mean(scores), np.std(scores)
+
 
 def numpy_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
     """Numpy implementation of the Frechet Distance.
@@ -339,7 +453,7 @@ def numpy_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
             np.tr(sigma2) - 2 * tr_covmean) 
 
 
-if __name__ == '__main__':
+"""if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('--path', type=str, required=True,
@@ -349,4 +463,5 @@ if __name__ == '__main__':
     parser.add_argument('--out_path', type=str, required=True,
                         help=('Path to save dataset stats'))
     args = parser.parse_args()
+"""
 
